@@ -48,24 +48,49 @@ export default function Usuarios() {
   const [form, setForm] = useState(emptyForm)
   const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [dataReady, setDataReady] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
-  const clientMap = useMemo(() => new Map(clients.map((item) => [item.id, item])), [clients])
-  const driverMap = useMemo(() => new Map(availableDrivers.map((item) => [item.id, item])), [drivers])
+  const clientMap = useMemo(
+    () => new Map(clients.map((item) => [item.id, item])),
+    [clients],
+  )
+
+  const driverMap = useMemo(
+    () => new Map(drivers.map((item) => [item.id, item])),
+    [drivers],
+  )
+
   const [changingUserId, setChangingUserId] = useState<string | null>(null)
 
   const [editingUserId, setEditingUserId] = useState<string | null>(null)
 
+  const editingClientId = useMemo(
+    () =>
+      profiles.find(
+        (profile) => profile.user_id === editingUserId,
+      )?.client_id ?? null,
+    [profiles, editingUserId],
+  )
+  
+  const editAvailableClients = useMemo(
+    () =>
+      clients.filter(
+        (client) =>
+          client.active ||
+          client.id === editingClientId,
+      ),
+    [clients, editingClientId],
+  )
+
   const [passwordUser, setPasswordUser] =
     useState<ProfileRow | null>(null)
 
-  const [newPassword, setNewPassword] =
-    useState('')
+  const [newPassword, setNewPassword] = useState('')
 
-  const [changingPassword, setChangingPassword] =
-    useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
 
   const [editForm, setEditForm] = useState({
     fullName: '',
@@ -73,6 +98,9 @@ export default function Usuarios() {
     clientId: '',
     driverId: '',
   })
+
+  const isBusy = loading || saving || changingPassword || changingUserId !== null
+  const availableClients = useMemo(() => clients.filter((client) => client.active), [clients])
 
   const linkedDriverIds = useMemo(
     () =>
@@ -83,7 +111,7 @@ export default function Usuarios() {
       ),
     [profiles],
   )
-  
+
   const availableDrivers = useMemo(
     () =>
       drivers.filter(
@@ -96,6 +124,7 @@ export default function Usuarios() {
 
   const reload = useCallback(async () => {
     setLoading(true)
+    setDataReady(false)
     setError('')
 
     try {
@@ -108,7 +137,6 @@ export default function Usuarios() {
         supabase
           .from('clients')
           .select('id, name, company_name, active')
-          .eq('active', true)
           .order('name'),
 
         supabase
@@ -124,6 +152,7 @@ export default function Usuarios() {
       setProfiles((profilesResult.data ?? []) as ProfileRow[])
       setClients((clientsResult.data ?? []) as ClientRow[])
       setDrivers((driversResult.data ?? []) as DriverRow[])
+      setDataReady(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Não foi possível carregar os usuários.')
     } finally {
@@ -137,12 +166,22 @@ export default function Usuarios() {
 
   async function submit(event: FormEvent) {
     event.preventDefault()
-  
+    if (isBusy || !dataReady) return
+
     setSaving(true)
     setError('')
     setMessage('')
   
     try {
+      if (!form.fullName.trim()) throw new Error('Informe o nome do usuário.')
+      if (!form.email.trim()) throw new Error('Informe o e-mail do usuário.')
+      if (form.role === 'piloto' && !availableDrivers.some((driver) => driver.id === form.driverId)) {
+        throw new Error('Selecione um piloto ativo disponível.')
+      }
+      if (form.role === 'cliente' && !availableClients.some((client) => client.id === form.clientId)) {
+        throw new Error('Selecione um cliente ativo.')
+      }
+
       const passwordOk =
         form.password.length >= 8 &&
         /[a-z]/.test(form.password) &&
@@ -212,6 +251,7 @@ export default function Usuarios() {
   }
 
   async function toggleUserActive(profile: ProfileRow) {
+    if (isBusy || !dataReady || profile.role === 'dono') return
     const nextActive = !profile.active
     const action = nextActive ? 'ativar' : 'desativar'
   
@@ -234,6 +274,8 @@ export default function Usuarios() {
           active: nextActive,
         })
         .eq('user_id', profile.user_id)
+        .select('user_id')
+        .single()
   
       if (profileError) {
         throw profileError
@@ -249,6 +291,8 @@ export default function Usuarios() {
             active: nextActive,
           })
           .eq('id', profile.driver_id)
+          .select('id')
+          .single()
   
         if (driverError) {
           throw driverError
@@ -263,6 +307,7 @@ export default function Usuarios() {
   
       await reload()
     } catch (err) {
+      await reload()
       setError(
         err instanceof Error
           ? err.message
@@ -274,6 +319,9 @@ export default function Usuarios() {
   }
 
   function startEdit(profile: ProfileRow) {
+    if (isBusy || !dataReady) return
+    setPasswordUser(null)
+    setNewPassword('')
     setEditingUserId(profile.user_id)
     setShowForm(false)
     setMessage('')
@@ -301,7 +349,11 @@ export default function Usuarios() {
   async function saveEdit(event: FormEvent) {
     event.preventDefault()
   
-    if (!editingUserId) return
+    if (isBusy || !dataReady || !editingUserId) return
+    if (!editForm.fullName.trim()) {
+      setError('Informe o nome do usuário.')
+      return
+    }
   
     const profile = profiles.find(
       (item) => item.user_id === editingUserId,
@@ -311,7 +363,7 @@ export default function Usuarios() {
   
     if (
       profile.role === 'cliente' &&
-      !editForm.clientId
+      !editAvailableClients.some((client) => client.id === editForm.clientId)
     ) {
       setError('Selecione o cliente vinculado.')
       return
@@ -319,7 +371,7 @@ export default function Usuarios() {
   
     if (
       profile.role === 'piloto' &&
-      !editForm.driverId
+      !editAvailableDrivers.some((driver) => driver.id === editForm.driverId)
     ) {
       setError('Selecione o piloto vinculado.')
       return
@@ -347,6 +399,8 @@ export default function Usuarios() {
               : null,
         })
         .eq('user_id', editingUserId)
+        .select('user_id')
+        .single()
   
       if (updateError) {
         throw updateError
@@ -386,8 +440,7 @@ const editAvailableDrivers = drivers.filter(
     const linkedToAnotherUser =
       profiles.some(
         (profile) =>
-          profile.user_id !==
-            editingProfile.user_id &&
+          profile.user_id !== editingProfile.user_id &&
           profile.driver_id === driver.id,
       )
 
@@ -401,141 +454,12 @@ const editAvailableDrivers = drivers.filter(
   },
 )
 
-{editingProfile ? (
-  <form
-    className="card cadastro-form"
-    onSubmit={saveEdit}
-  >
-    <h3>
-      Editar usuário — {editingProfile.full_name}
-    </h3>
-
-    <div className="form-grid">
-      <label className="field">
-        <span>Nome</span>
-
-        <input
-          type="text"
-          value={editForm.fullName}
-          required
-          onChange={(e) =>
-            setEditForm({
-              ...editForm,
-              fullName: e.target.value,
-            })
-          }
-        />
-      </label>
-
-      <label className="field">
-        <span>Telefone</span>
-
-        <input
-          type="tel"
-          value={editForm.phone}
-          onChange={(e) =>
-            setEditForm({
-              ...editForm,
-              phone: e.target.value,
-            })
-          }
-        />
-      </label>
-
-      <label className="field">
-        <span>Tipo de usuário</span>
-
-        <input
-          type="text"
-          value={roleLabel(editingProfile.role)}
-          disabled
-        />
-      </label>
-
-      {editingProfile.role === 'piloto' ? (
-        <label className="field">
-          <span>Piloto vinculado</span>
-
-          <select
-            value={editForm.driverId}
-            required
-            onChange={(e) =>
-              setEditForm({
-                ...editForm,
-                driverId: e.target.value,
-              })
-            }
-          >
-            <option value="">
-              Selecione o piloto
-            </option>
-
-            {editAvailableDrivers.map((driver) => (
-              <option key={driver.id} value={driver.id}>
-                {driver.name}
-                {driver.plate ? ` · ${driver.plate}` : ''}
-                {!driver.active ? ' · Inativo' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-
-      {editingProfile.role === 'cliente' ? (
-        <label className="field">
-          <span>Cliente vinculado</span>
-
-          <select
-            value={editForm.clientId}
-            required
-            onChange={(e) =>
-              setEditForm({
-                ...editForm,
-                clientId: e.target.value,
-              })
-            }
-          >
-            <option value="">
-              Selecione o cliente
-            </option>
-
-            {clients.map((client) => (
-              <option key={client.id} value={client.id}>
-                {client.company_name || client.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-    </div>
-
-    <div className="form-actions">
-      <button
-        className="btn btn-gold btn-inline"
-        type="submit"
-        disabled={saving}
-      >
-        {saving ? 'Salvando...' : 'Salvar alterações'}
-      </button>
-
-      <button
-        className="btn btn-ghost"
-        type="button"
-        disabled={saving}
-        onClick={cancelEdit}
-      >
-        Cancelar
-      </button>
-    </div>
-  </form>
-) : null}
-
 async function saveNewPassword(
   event: FormEvent,
 ) {
   event.preventDefault()
 
-  if (!passwordUser) return
+  if (isBusy || !passwordUser) return
 
   const passwordOk =
     newPassword.length >= 8 &&
@@ -589,8 +513,14 @@ return (
       <button
         className="btn btn-gold btn-inline"
         type="button"
+        disabled={isBusy || !dataReady}
         onClick={() => {
           cancelEdit()
+          setPasswordUser(null)
+          setNewPassword('')
+          setForm(emptyForm)
+          setError('')
+          setMessage('')
           setShowForm((value) => !value)
         }}
       >
@@ -610,6 +540,12 @@ return (
       </div>
     ) : null}
 
+    {!dataReady && !loading ? (
+      <button className="btn btn-ghost" type="button" disabled={isBusy} onClick={() => void reload()}>
+        Tentar carregar novamente
+      </button>
+    ) : null}
+
     {showForm ? (
       <form
         className="card cadastro-form"
@@ -617,15 +553,156 @@ return (
       >
         <h3>Novo usuário</h3>
 
-        <div className="form-grid">
-          {/* aqui ficam nome, e-mail, telefone, senha, tipo e vínculo */}
+    <div className="form-grid">
+      <label className="field">
+        <span>Nome</span>
+        <input disabled={isBusy}
+          type="text"
+          value={form.fullName}
+          required
+          onChange={(e) =>
+            setForm({
+              ...form,
+              fullName: e.target.value,
+            })
+          }
+        />
+      </label>
+
+      <label className="field">
+        <span>E-mail</span>
+        <input disabled={isBusy}
+          type="email"
+          value={form.email}
+          required
+          autoComplete="off"
+          onChange={(e) =>
+            setForm({
+              ...form,
+              email: e.target.value,
+            })
+          }
+        />
+      </label>
+
+      <label className="field">
+        <span>Telefone</span>
+        <input disabled={isBusy}
+          type="tel"
+          value={form.phone}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              phone: e.target.value,
+            })
+          }
+        />
+      </label>
+
+      <label className="field">
+        <span>Senha inicial</span>
+        <input disabled={isBusy}
+          type="password"
+          value={form.password}
+          required
+          minLength={8}
+          autoComplete="new-password"
+          onChange={(e) =>
+            setForm({
+              ...form,
+              password: e.target.value,
+            })
+          }
+        />
+
+        <div className="form-hint muted">
+          Mínimo 8 caracteres, com maiúscula, minúscula, número e símbolo.
         </div>
+      </label>
+
+      <label className="field">
+        <span>Tipo de usuário</span>
+
+        <select disabled={isBusy || !dataReady}
+          value={form.role}
+          onChange={(e) =>
+            setForm({
+              ...form,
+              role: e.target.value as UserRole,
+              clientId: '',
+              driverId: '',
+            })
+          }
+        >
+          <option value="piloto">Piloto</option>
+          <option value="cliente">Cliente</option>
+        </select>
+      </label>
+
+      {form.role === 'piloto' ? (
+        <label className="field">
+          <span>Piloto vinculado</span>
+
+          <select disabled={isBusy || !dataReady}
+            value={form.driverId}
+            required
+            onChange={(e) =>
+              setForm({
+                ...form,
+                driverId: e.target.value,
+              })
+            }
+          >
+            <option value="">Selecione o piloto</option>
+
+            {availableDrivers.map((driver) => (
+              <option key={driver.id} value={driver.id}>
+                {driver.name}
+                {driver.plate ? ` · ${driver.plate}` : ''}
+              </option>
+            ))}
+          </select>
+
+          {!availableDrivers.length ? (
+            <div className="form-hint muted">
+              Não há pilotos ativos disponíveis para vincular.
+            </div>
+          ) : null}
+        </label>
+      ) : null}
+
+      {form.role === 'cliente' ? (
+        <label className="field">
+          <span>Cliente vinculado</span>
+
+          <select disabled={isBusy || !dataReady}
+            value={form.clientId}
+            required
+            onChange={(e) =>
+              setForm({
+                ...form,
+                clientId: e.target.value,
+              })
+            }
+          >
+            <option value="">Selecione o cliente</option>
+
+            {availableClients.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.company_name || client.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+    </div>
+
 
         <div className="form-actions">
           <button
             className="btn btn-gold btn-inline"
             type="submit"
-            disabled={saving}
+            disabled={isBusy || !dataReady}
           >
             {saving ? 'Criando...' : 'Criar usuário'}
           </button>
@@ -633,7 +710,7 @@ return (
           <button
             className="btn btn-ghost"
             type="button"
-            disabled={saving}
+            disabled={isBusy || !dataReady}
             onClick={() => {
               setShowForm(false)
               setForm(emptyForm)
@@ -644,6 +721,63 @@ return (
         </div>
       </form>
     ) : null}
+
+{editingProfile ? (
+  <form className="card cadastro-form" onSubmit={saveEdit}>
+    <h3>Editar usuário — {editingProfile.full_name}</h3>
+    <div className="form-grid">
+      <label className="field">
+        <span>Nome</span>
+        <input disabled={isBusy} type="text" value={editForm.fullName} required
+          onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })} />
+      </label>
+      <label className="field">
+        <span>Telefone</span>
+        <input disabled={isBusy} type="tel" value={editForm.phone}
+          onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+      </label>
+      {editingProfile.role === 'piloto' ? (
+        <label className="field">
+          <span>Piloto vinculado</span>
+          <select disabled={isBusy || !dataReady} value={editForm.driverId} required
+            onChange={(e) => setEditForm({ ...editForm, driverId: e.target.value })}>
+            <option value="">Selecione o piloto</option>
+            {editAvailableDrivers.map((driver) => (
+              <option key={driver.id} value={driver.id}>
+                {driver.name}
+                {driver.plate ? ` · ${driver.plate}` : ''}
+                {!driver.active ? ' · Inativo' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {editingProfile.role === 'cliente' ? (
+        <label className="field">
+          <span>Cliente vinculado</span>
+          <select disabled={isBusy || !dataReady} value={editForm.clientId} required
+            onChange={(e) => setEditForm({ ...editForm, clientId: e.target.value })}>
+            <option value="">Selecione o cliente</option>
+            {editAvailableClients.map((client) => (
+              <option key={client.id} value={client.id}>
+                {client.company_name || client.name}
+                {!client.active ? ' · Inativo' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+    </div>
+    <div className="form-actions">
+      <button className="btn btn-gold btn-inline" type="submit" disabled={isBusy || !dataReady}>
+        {saving ? 'Salvando...' : 'Salvar alterações'}
+      </button>
+      <button className="btn btn-ghost" type="button" disabled={isBusy} onClick={cancelEdit}>
+        Cancelar
+      </button>
+    </div>
+  </form>
+) : null}
 
 {passwordUser ? (
   <form
@@ -657,7 +791,7 @@ return (
     <label className="field">
       <span>Nova senha</span>
 
-      <input
+      <input disabled={isBusy}
         type="password"
         value={newPassword}
         required
@@ -675,7 +809,7 @@ return (
       <button
         className="btn btn-gold btn-inline"
         type="submit"
-        disabled={changingPassword}
+        disabled={isBusy}
       >
         {changingPassword ? 'Alterando...' : 'Alterar senha'}
       </button>
@@ -683,7 +817,7 @@ return (
       <button
         className="btn btn-ghost"
         type="button"
-        disabled={changingPassword}
+        disabled={isBusy}
         onClick={() => {
           setPasswordUser(null)
           setNewPassword('')
@@ -729,7 +863,8 @@ return (
                       <button
                         className="btn btn-ghost btn-small"
                         type="button"
-                        onClick={() => startEdit(profile)}
+                        disabled={isBusy || !dataReady}
+        onClick={() => startEdit(profile)}
                       >
                         Editar
                       </button>
@@ -737,7 +872,11 @@ return (
                       <button
                         className="btn btn-ghost btn-small"
                         type="button"
-                        onClick={() => {
+                        disabled={isBusy || !dataReady}
+        onClick={() => {
+                          cancelEdit()
+                          setShowForm(false)
+                          setForm(emptyForm)
                           setPasswordUser(profile)
                           setNewPassword('')
                           setError('')
@@ -752,7 +891,7 @@ return (
                           className="btn btn-ghost btn-small"
                           type="button"
                           disabled={
-                            changingUserId === profile.user_id
+                            isBusy || !dataReady
                           }
                           onClick={() =>
                             void toggleUserActive(profile)
