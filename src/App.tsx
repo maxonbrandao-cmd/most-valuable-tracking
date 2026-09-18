@@ -14,6 +14,7 @@ import Canhotos from './pages/Canhotos'
 import CanhotoNovo from './pages/CanhotoNovo'
 import Financeiro from './pages/Financeiro'
 import Cadastros from './pages/Cadastros'
+import Usuarios from './pages/Usuarios'
 
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadState())
@@ -251,8 +252,10 @@ export default function App() {
         <Route element={session ? <Layout /> : <Navigate to="/login" replace />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/rastreio" element={<Tracking />} />
-          <Route path="/entregas" element={<Entregas />} />`n          <Route path="/programacoes" element={<Programacoes />} />
+          <Route path="/entregas" element={<Entregas />} />
+          <Route path="/programacoes" element={<Programacoes />} />
           <Route path="/cadastros" element={<Cadastros />} />
+          <Route path="/usuarios" element={<Usuarios />} />
           <Route path="/canhotos" element={<Canhotos />} />
           <Route path="/canhotos/novo" element={<CanhotoNovo />} />
           <Route path="/financeiro" element={<Financeiro />} />
