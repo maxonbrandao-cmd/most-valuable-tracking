@@ -8,6 +8,9 @@ import Login from './pages/Login'
 import Layout from './pages/Layout'
 import Dashboard from './pages/Dashboard'
 import Tracking from './pages/Tracking'
+import MeusPostos from './pages/MeusPostos'
+import MeusPostosPiloto from './pages/MeusPostosPiloto'
+import AtendimentosPostos from './pages/AtendimentosPostos'
 import Entregas from './pages/Entregas'
 import Programacoes from './pages/Programacoes'
 import Canhotos from './pages/Canhotos'
@@ -15,6 +18,7 @@ import CanhotoNovo from './pages/CanhotoNovo'
 import Financeiro from './pages/Financeiro'
 import Cadastros from './pages/Cadastros'
 import Usuarios from './pages/Usuarios'
+import MinhasCorridas from './pages/MinhasCorridas'
 
 export default function App() {
   const [state, setState] = useState<AppState>(() => loadState())
@@ -252,7 +256,11 @@ export default function App() {
         <Route element={session ? <Layout /> : <Navigate to="/login" replace />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/rastreio" element={<Tracking />} />
+          <Route path="/meus-postos-piloto" element={<MeusPostosPiloto />} />
+          <Route path="/meus-postos" element={<MeusPostos />} />
           <Route path="/entregas" element={<Entregas />} />
+          <Route path="/minhas-corridas" element={<MinhasCorridas />} />
+          <Route path="/atendimentos-postos" element={<AtendimentosPostos />} />
           <Route path="/programacoes" element={<Programacoes />} />
           <Route path="/cadastros" element={<Cadastros />} />
           <Route path="/usuarios" element={<Usuarios />} />

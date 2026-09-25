@@ -24,6 +24,8 @@ export type DeliveryRecord = {
   driver_payout: number
   notes: string | null
   status: DeliveryStatus
+  schedule_id: string | null
+  started_at: string | null
   scheduled_at: string | null
   accepted_at: string | null
   picked_up_at: string | null
@@ -82,7 +84,7 @@ function optional(value: string) {
 export async function listDeliveries(companyId: string) {
   const { data, error } = await db()
     .from('deliveries')
-    .select('id, company_id, code, client_id, driver_id, origin_address, origin_postal_code, destination_address, destination_postal_code, value, driver_payout, notes, status, scheduled_at, accepted_at, picked_up_at, delivered_at, created_at')
+    .select('id, company_id, code, client_id, driver_id, origin_address, origin_postal_code, destination_address, destination_postal_code, value, driver_payout, notes, status, schedule_id, started_at, scheduled_at, accepted_at, picked_up_at, delivered_at, created_at')
     .eq('company_id', companyId)
     .order('created_at', { ascending: false })
 
@@ -126,11 +128,12 @@ export async function saveDelivery(companyId: string, input: DeliveryInput, id?:
 }
 
 export async function changeDeliveryStatus(deliveryId: string, status: DeliveryStatus) {
-  const { error } = await db().rpc('set_delivery_status', {
+  const { data, error } = await db().rpc('set_delivery_status', {
     p_delivery_id: deliveryId,
     p_status: status,
   })
   parseError(error, 'Não foi possível alterar o status.')
+  return data as DeliveryRecord
 }
 
 export async function listDeliveryHistory(companyId: string, deliveryId: string) {
@@ -158,9 +161,47 @@ export const deliveryStatusLabel: Record<DeliveryStatus, string> = {
 
 export const allDeliveryStatuses = Object.keys(deliveryStatusLabel) as DeliveryStatus[]
 
+export const pilotStatusTransitions: Record<DeliveryStatus, DeliveryStatus[]> = {
+  pendente: ['aceito'],
+  aceito: ['coletado', 'cancelado'],
+  coletado: ['em_rota', 'cancelado'],
+  em_rota: ['chegou', 'nao_entregue'],
+  chegou: ['entregue', 'nao_entregue'],
+  entregue: [],
+  nao_entregue: ['em_rota'],
+  cancelado: [],
+}
+
+export const pilotStatusActionLabel: Partial<Record<DeliveryStatus, string>> = {
+  aceito: 'Aceitar corrida',
+  coletado: 'Confirmar coleta',
+  em_rota: 'Iniciar entrega',
+  chegou: 'Confirmar chegada',
+  entregue: 'Confirmar entrega',
+  nao_entregue: 'Não foi possível entregar',
+  cancelado: 'Cancelar corrida',
+}
+
 export function statusBadge(status: DeliveryStatus) {
   if (status === 'entregue') return 'badge b-ok'
   if (status === 'em_rota' || status === 'coletado' || status === 'chegou') return 'badge b-blue'
   if (status === 'pendente' || status === 'aceito') return 'badge b-warn'
   return 'badge b-off'
+}
+
+export function needsDeliveryStart(row: DeliveryRecord) {
+  return Boolean(row.schedule_id && row.status === 'pendente' && !row.started_at)
+}
+export function deliveryDisplayStatus(row: DeliveryRecord) {
+  if (row.schedule_id && row.status === 'pendente') return row.started_at ? 'Em atendimento' : 'Programada'
+  return deliveryStatusLabel[row.status]
+}
+export function deliveryPilotTransitions(row: DeliveryRecord): DeliveryStatus[] {
+  if (row.schedule_id && row.status === 'pendente') return row.started_at ? ['coletado'] : []
+  return pilotStatusTransitions[row.status]
+}
+export async function startRecurringDelivery(id: string) {
+  const { data, error } = await db().rpc('start_recurring_delivery', { p_delivery_id: id })
+  parseError(error, 'Não foi possível iniciar o atendimento.')
+  return data as DeliveryRecord
 }

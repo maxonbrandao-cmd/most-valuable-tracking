@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CircleMarker, MapContainer, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
-import type { LatLngExpression } from 'leaflet'
+import { latLngBounds, type LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useStore } from '../context'
 import {
@@ -25,6 +25,62 @@ function RecenterMap({ center }: { center: LatLngExpression }) {
   return null
 }
 
+function FitTrackBounds({
+  track,
+  enabled,
+}: {
+  track: GpsPosition[]
+  enabled: boolean
+}) {
+  const map = useMap()
+  const [hasFitted, setHasFitted] = useState(false)
+
+  useEffect(() => {
+    if (!enabled) {
+      setHasFitted(false)
+      return
+    }
+
+    if (hasFitted || track.length < 2) {
+      return
+    }
+
+    const validPoints = track
+      .filter(
+        (point) =>
+          Number.isFinite(point.latitude) &&
+          Number.isFinite(point.longitude),
+      )
+      .map(
+        (point) =>
+          [
+            point.latitude,
+            point.longitude,
+          ] as [number, number],
+      )
+
+    if (validPoints.length < 2) {
+      return
+    }
+
+    const bounds = latLngBounds(validPoints)
+
+    if (!bounds.isValid()) {
+      return
+    }
+
+    map.fitBounds(bounds, {
+      padding: [40, 40],
+      maxZoom: 16,
+      animate: true,
+    })
+
+    setHasFitted(true)
+  }, [enabled, hasFitted, map, track])
+
+  return null
+}
+
 function speedLabel(speed: number | null) {
   if (speed == null || speed < 0) return '—'
   return `${Math.round(speed * 3.6)} km/h`
@@ -41,6 +97,7 @@ export default function Tracking() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null)
+  const [showTrack, setShowTrack] = useState(false)
 
   const positionsByDriver = useMemo(
     () => new Map(positions.map((position) => [position.driver_id, position])),
@@ -93,29 +150,46 @@ export default function Tracking() {
   }, [companyId, loadLatest])
 
   useEffect(() => {
-    if (!companyId || !selectedId) {
+    if (!companyId || !selectedId || !showTrack) {
       setTrack([])
       return
     }
+
     void listDriverTrack(companyId, selectedId)
       .then(setTrack)
-      .catch((trackError) => setError(trackError instanceof Error ? trackError.message : 'Falha ao carregar trajeto.'))
-  }, [companyId, selectedId, positions])
-
-  if (!companyId) {
-    return <div className="card"><p className="gps-error">Usuário sem empresa vinculada.</p></div>
-  }
+      .catch((trackError) =>
+        setError(
+          trackError instanceof Error
+            ? trackError.message
+            : 'Falha ao carregar trajeto.',
+        ),
+      )
+  }, [companyId, selectedId, positions, showTrack])
 
   return (
     <section className="gps-page">
       <div className="gps-header">
         <div>
           <h1>Rastreio GPS</h1>
-          <p>Posição dos pilotos e trajeto das últimas 8 horas.</p>
+          <p>Acompanhe a posição dos pilotos em tempo real e consulte o trajeto quando necessário.</p>
         </div>
-        <button className="btn btn-ghost" onClick={() => void loadLatest()} disabled={loading}>
-          {loading ? 'Atualizando...' : 'Atualizar mapa'}
-        </button>
+        <div className="gps-header-actions">
+          <button
+            className={`btn ${showTrack ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setShowTrack((current) => !current)}
+            disabled={!selectedId}
+          >
+            {showTrack ? 'Ocultar trajeto' : 'Mostrar trajeto'}
+          </button>
+
+          <button
+            className="btn btn-ghost"
+            onClick={() => void loadLatest()}
+            disabled={loading}
+          >
+            {loading ? 'Atualizando...' : 'Atualizar mapa'}
+          </button>
+        </div>
       </div>
 
       <div className="gps-summary">
@@ -159,16 +233,62 @@ export default function Tracking() {
 
         <div className="gps-map-card">
           <MapContainer center={center} zoom={13} className="gps-map" scrollWheelZoom>
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          {!showTrack ? (
             <RecenterMap center={center} />
-            {track.length > 1 && (
-              <Polyline
-                positions={track.map((point) => [point.latitude, point.longitude] as [number, number])}
-                pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.75 }}
-              />
+          ) : null}
+           <FitTrackBounds
+            track={track}
+            enabled={showTrack}
+          />
+            {showTrack && track.length > 1 && (
+              <>
+                <Polyline
+                  positions={track
+                    .filter(
+                      (point) =>
+                        Number.isFinite(point.latitude) &&
+                        Number.isFinite(point.longitude),
+                    )
+                    .map(
+                      (point) =>
+                        [
+                          point.latitude,
+                          point.longitude,
+                        ] as [number, number],
+                    )}
+                  pathOptions={{
+                    color: '#f5a524',
+                    weight: 5,
+                    opacity: 0.9,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                  }}
+                />
+
+              <CircleMarker
+                center={[
+                  track[0].latitude,
+                  track[0].longitude,
+                ]}
+                radius={7}
+                pathOptions={{
+                  color: '#ffffff',
+                  weight: 2,
+                  fillColor: '#3dd68c',
+                  fillOpacity: 1,
+                }}
+              >
+                <Popup>
+                  <strong>Início do trajeto</strong>
+                  <br />
+                  {formatPositionTime(track[0].captured_at)}
+                </Popup>
+              </CircleMarker>
+              </>
             )}
             {visiblePositions.map((position) => {
               const driver = drivers.find((item) => item.id === position.driver_id)
@@ -207,11 +327,10 @@ export default function Tracking() {
           <div><span>Veículo</span><strong>{selectedDriver.plate || selectedDriver.vehicle_description || 'Não informado'}</strong></div>
           <div><span>Velocidade</span><strong>{speedLabel(selectedPosition?.speed ?? null)}</strong></div>
           <div><span>Precisão</span><strong>{selectedPosition?.accuracy != null ? `${Math.round(selectedPosition.accuracy)} m` : '—'}</strong></div>
-          <div><span>Pontos no trajeto</span><strong>{track.length}</strong></div>
+          <div><span>Trajeto</span><strong>{showTrack? `${track.length} pontos`: 'Oculto'} </strong></div>
           <div><span>Última posição</span><strong>{formatPositionTime(selectedPosition?.captured_at)}</strong></div>
         </div>
       )}
     </section>
   )
 }
-

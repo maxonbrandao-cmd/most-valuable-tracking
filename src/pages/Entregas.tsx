@@ -1,4 +1,10 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 import { useStore } from '../context'
 import { supabase } from '../lib/supabase'
 import { addressFromCep, formatCep, lookupCep } from '../lib/cep'
@@ -9,6 +15,10 @@ import {
   listDeliveries,
   listDeliveryHistory,
   listDeliveryOptions,
+  deliveryPilotTransitions,
+  needsDeliveryStart,
+  startRecurringDelivery,
+  deliveryDisplayStatus,
   saveDelivery,
   statusBadge,
   type DeliveryClient,
@@ -74,17 +84,6 @@ function RecenterDeliveryMap({
   return null
 }
 
-const pilotTransitions: Record<DeliveryStatus, DeliveryStatus[]> = {
-  pendente: ['pendente', 'aceito', 'coletado'],
-  aceito: ['aceito', 'coletado', 'cancelado'],
-  coletado: ['coletado', 'em_rota', 'cancelado'],
-  em_rota: ['em_rota', 'chegou', 'entregue', 'nao_entregue'],
-  chegou: ['chegou', 'entregue', 'nao_entregue'],
-  entregue: ['entregue'],
-  nao_entregue: ['nao_entregue', 'em_rota'],
-  cancelado: ['cancelado'],
-}
-
 export default function Entregas() {
   const { state } = useStore()
   const user = state.users.find((item) => item.id === state.sessionUserId)!
@@ -114,6 +113,9 @@ export default function Entregas() {
 
   const clientMap = useMemo(() => new Map(clients.map((item) => [item.id, item])), [clients])
   const driverMap = useMemo(() => new Map(drivers.map((item) => [item.id, item])), [drivers])
+
+  const [visibleCount, setVisibleCount] = useState(10)
+  const [filtersOpen, setFiltersOpen] = useState(true)
 
   function localDateKey(value?: string | null) {
   if (!value) return ''
@@ -154,7 +156,30 @@ const filteredRows = useMemo(() => {
   })
 }, [rows, searchCode, driverFilter, dateFilter])
 
- async function openTracking(row: DeliveryRecord) {
+const visibleRows = useMemo(
+  () => filteredRows.slice(0, visibleCount),
+  [filteredRows, visibleCount],
+)
+
+useEffect(() => {
+  setVisibleCount(10)
+}, [
+  searchCode,
+  driverFilter,
+  dateFilter,
+])
+
+async function openTracking(row: DeliveryRecord) {
+  if (trackingDelivery?.id === row.id) {
+    setTrackingDelivery(null)
+    setTrackingPosition(null)
+    setTrackingError('')
+    return
+  }
+
+  setHistoryDelivery(null)
+  setHistory([])
+
   setTrackingDelivery(row)
   setTrackingLoading(true)
   setTrackingError('')
@@ -298,13 +323,27 @@ const reload = useCallback(async () => {
     }
   }
 
+  async function startAttendance(row: DeliveryRecord) {
+    if (changingId) return
+    setChangingId(row.id)
+    setError('')
+    setMessage('')
+    try {
+      const updated = await startRecurringDelivery(row.id)
+      setRows(current => current.map(item => item.id === updated.id ? updated : item))
+      setMessage('Atendimento iniciado. Confirme a coleta quando retirar o pedido.')
+    } catch (e: any) {
+      setError(e?.message || 'Não foi possível iniciar o atendimento.')
+    } finally { setChangingId('') }
+  }
+
   async function setStatus(row: DeliveryRecord, status: DeliveryStatus) {
     setChangingId(row.id)
     setMessage('')
     setError('')
     try {
       await changeDeliveryStatus(row.id, status)
-      setMessage(`Entrega ${row.code}: status alterado para ${deliveryStatusLabel[status]}.`)
+      setMessage(`Entrega ${row.code}: status alterado para ${status === row.status ? deliveryDisplayStatus(row) : deliveryStatusLabel[status]}.`)
       await reload()
       if (historyDelivery?.id === row.id) await openHistory({ ...row, status })
     } catch (err) {
@@ -316,13 +355,31 @@ const reload = useCallback(async () => {
 
   async function openHistory(row: DeliveryRecord) {
     if (!companyId) return
+
+    if (historyDelivery?.id === row.id) {
+      setHistoryDelivery(null)
+      setHistory([])
+      return
+    }
+
+    setTrackingDelivery(null)
+    setTrackingPosition(null)
+    setTrackingError('')
+
     setHistoryDelivery(row)
     setHistoryLoading(true)
     setError('')
+
     try {
-      setHistory(await listDeliveryHistory(companyId, row.id))
+      setHistory(
+        await listDeliveryHistory(companyId, row.id),
+      )
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível carregar o histórico.')
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível carregar o histórico.',
+      )
     } finally {
       setHistoryLoading(false)
     }
@@ -426,286 +483,533 @@ const reload = useCallback(async () => {
         </form>
       ) : null}
 
-      <div className="card delivery-filters">
-  <label className="filter-field">
-    <span>Código da corrida</span>
+    <div className="card delivery-filters-card">
+      <div className="delivery-filters-header">
+        <div>
+          <h3>Filtros</h3>
 
-    <input
-      type="search"
-      placeholder="Ex.: COR-00123"
-      value={searchCode}
-      onChange={(event) =>
-        setSearchCode(event.target.value)
-      }
-    />
-  </label>
+          <p className="muted">
+            Refine a lista de corridas.
+          </p>
+        </div>
 
-  <label className="filter-field">
-    <span>Motorista</span>
-
-    <select
-      value={driverFilter}
-      onChange={(event) =>
-        setDriverFilter(event.target.value)
-      }
-    >
-      <option value="">Todos os motoristas</option>
-
-      {drivers.map((driver) => (
-        <option
-          key={driver.id}
-          value={driver.id}
+        <button
+          type="button"
+          className="btn btn-ghost btn-small"
+          onClick={() =>
+            setFiltersOpen((current) => !current)
+          }
         >
-          {driver.name}
-          {driver.plate
-            ? ` · ${driver.plate}`
-            : ''}
-        </option>
-      ))}
-    </select>
-  </label>
-
-  <label className="filter-field">
-    <span>Data</span>
-
-    <input
-      type="date"
-      value={dateFilter}
-      onChange={(event) =>
-        setDateFilter(event.target.value)
-      }
-    />
-  </label>
-
-  <button
-    type="button"
-    className="btn btn-ghost"
-    onClick={() => {
-      setSearchCode('')
-      setDriverFilter('')
-      setDateFilter('')
-    }}
-  >
-    Limpar filtros
-  </button>
-</div>
-
-      <div className="card table-card">
-        {loading ? <p className="muted">Carregando entregas...</p> : (
-          <table className="table">
-            <thead>
-              <tr><th>Código</th><th>Cliente</th><th>Rota</th><th>Piloto</th><th>Valor</th><th>Status</th><th></th></tr>
-            </thead>
-            <tbody>
-              {filteredRows.map((row) => {
-                const client = clientMap.get(row.client_id)
-                const driver = row.driver_id ? driverMap.get(row.driver_id) : undefined
-                const statuses = user.role === 'piloto' ? pilotTransitions[row.status] : allDeliveryStatuses
-                return (
-                  <tr key={row.id}>
-                    <td data-label="Código"><strong>{row.code}</strong><div className="muted">{dateTime(row.created_at)}</div></td>
-                    <td data-label="Cliente">{client?.company_name || client?.name || 'Cliente'}</td>
-                    <td data-label="Rota"><div>{row.origin_address}</div><div className="route-arrow">→ {row.destination_address}</div></td>
-                    <td data-label="Piloto">{driver?.name || 'Não atribuído'}{driver?.plate ? <div className="muted">{driver.plate}</div> : null}</td>
-                    <td data-label="Valor">{brl(row.value)}{row.driver_payout ? <div className="muted">Repasse {brl(row.driver_payout)}</div> : null}</td>
-                    <td data-label="Status" className="status-cell">
-                      {user.role === 'cliente' ? (
-                        <span className={statusBadge(row.status)}>{deliveryStatusLabel[row.status]}</span>
-                      ) : (
-                        <select className="status-select" value={row.status} disabled={changingId === row.id} onChange={(e) => void setStatus(row, e.target.value as DeliveryStatus)}>
-                          {statuses.map((status) => <option key={status} value={status}>{deliveryStatusLabel[status]}</option>)}
-                        </select>
-                      )}
-                    </td>
-                    <td data-label="Ações" className="actions-cell">
-                      <div className="table-actions"><button className="btn btn-ghost btn-small" type="button" onClick={() => void openHistory(row)}>
-            Histórico
-          </button>
-
-                          {user.role === 'cliente' &&
-                          row.driver_id &&
-                          ['aceito', 'coletado', 'em_rota', 'chegou'].includes(row.status) ? (
-                            <button
-                              className="btn btn-gold btn-small"
-                              type="button"
-                              onClick={() => void openTracking(row)}
-                            >
-                              Acompanhar piloto
-                            </button>
-                          ) : null}
-
-                          {user.role === 'dono' ? (
-                            <button className="btn btn-ghost btn-small" type="button" onClick={() => startEdit(row)}>
-            Editar
-          </button>
-                          ) : null}
-                        </div>
-                    </td>
-                  </tr>
-                )
-              })}
-              {!filteredRows.length ? <tr><td colSpan={7} className="muted">Nenhuma entrega encontrada com os filtros selecionados.</td></tr> : null}
-            </tbody>
-          </table>
-        )}
-      </div>
-      {user.role === 'cliente' && trackingDelivery ? (
-  <div className="card gps-detail-card">
-    <div className="section-heading">
-      <div>
-        <h3>Acompanhar entrega · {trackingDelivery.code}</h3>
-
-        <p className="muted">
-          {trackingDelivery.origin_address}
-          {' → '}
-          {trackingDelivery.destination_address}
-        </p>
+          {filtersOpen
+            ? 'Ocultar filtros'
+            : 'Mostrar filtros'}
+        </button>
       </div>
 
-      <button
-        className="btn btn-ghost btn-small"
-        type="button"
-        onClick={() => {
-          setTrackingDelivery(null)
-          setTrackingPosition(null)
-          setTrackingError('')
-        }}
-      >
-        Fechar
-      </button>
-    </div>
+      {filtersOpen ? (
+        <div className="delivery-filters">
+          <label className="filter-field">
+            <span>Código da corrida</span>
 
-    {trackingLoading ? (
-      <p className="muted">
-        Localizando piloto...
-      </p>
-    ) : null}
-
-    {trackingError ? (
-      <div className="notice notice-error">
-        {trackingError}
-      </div>
-    ) : null}
-
-    {!trackingLoading && !trackingPosition ? (
-      <div className="notice">
-        O piloto ainda não enviou uma posição GPS para esta entrega.
-      </div>
-    ) : null}
-
-    {trackingPosition ? (
-      <>
-        <div
-          style={{
-            height: '420px',
-            overflow: 'hidden',
-            borderRadius: '12px',
-          }}
-        >
-          <MapContainer
-            center={[
-              trackingPosition.latitude,
-              trackingPosition.longitude,
-            ]}
-            zoom={15}
-            style={{
-              width: '100%',
-              height: '100%',
-            }}
-            scrollWheelZoom
-          >
-            <TileLayer
-              attribution='&copy; OpenStreetMap contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            <input
+              type="search"
+              placeholder="Ex.: A7K2P9"
+              value={searchCode}
+              onChange={(event) =>
+                setSearchCode(event.target.value)
+              }
             />
+          </label>
 
-            <RecenterDeliveryMap
-              center={[
-                trackingPosition.latitude,
-                trackingPosition.longitude,
-              ]}
-            />
+          <label className="filter-field">
+            <span>Motorista</span>
 
-            <CircleMarker
-              center={[
-                trackingPosition.latitude,
-                trackingPosition.longitude,
-              ]}
-              radius={10}
-              pathOptions={{
-                color: '#ffffff',
-                weight: 3,
-                fillColor: '#22c55e',
-                fillOpacity: 1,
-              }}
+            <select
+              value={driverFilter}
+              onChange={(event) =>
+                setDriverFilter(event.target.value)
+              }
             >
-              <Popup>
-                <strong>Piloto da sua entrega</strong>
-                <br />
+              <option value="">
+                Todos os motoristas
+              </option>
 
-                Última atualização:{' '}
-                {formatPositionTime(
-                  trackingPosition.captured_at,
-                )}
-              </Popup>
-            </CircleMarker>
-          </MapContainer>
-        </div>
-
-        <div
-          className="gps-summary"
-          style={{ marginTop: '16px' }}
-        >
-          <div className="gps-stat">
-            <span>Status</span>
-            <strong>
-              {deliveryStatusLabel[trackingDelivery.status]}
-            </strong>
-          </div>
-
-          <div className="gps-stat">
-            <span>Última posição</span>
-            <strong>
-              {formatPositionTime(
-                trackingPosition.captured_at,
-              )}
-            </strong>
-          </div>
-
-          <div className="gps-stat">
-            <span>Precisão</span>
-            <strong>
-              {trackingPosition.accuracy != null
-                ? `${Math.round(
-                    trackingPosition.accuracy,
-                  )} m`
-                : '—'}
-            </strong>
-          </div>
-        </div>
-      </>
-    ) : null}
-  </div>
-) : null}
-      {historyDelivery ? (
-        <div className="card history-card">
-          <div className="section-heading">
-            <div><h3>Histórico · {historyDelivery.code}</h3><p className="muted">Todos os eventos registrados no banco.</p></div>
-            <button className="btn btn-ghost btn-small" onClick={() => setHistoryDelivery(null)}>Fechar</button>
-          </div>
-          {historyLoading ? <p className="muted">Carregando histórico...</p> : (
-            <div className="history-list">
-              {history.map((item) => (
-                <div className="history-item" key={item.id}>
-                  <span className={statusBadge(item.status)}>{deliveryStatusLabel[item.status]}</span>
-                  <div><strong>{dateTime(item.created_at)}</strong>{item.note ? <div className="muted">{item.note}</div> : null}</div>
-                </div>
+              {drivers.map((driver) => (
+                <option
+                  key={driver.id}
+                  value={driver.id}
+                >
+                  {driver.name}
+                  {driver.plate
+                    ? ` · ${driver.plate}`
+                    : ''}
+                </option>
               ))}
-              {!history.length ? <p className="muted">Nenhum evento registrado.</p> : null}
-            </div>
-          )}
+            </select>
+          </label>
+
+          <label className="filter-field">
+            <span>Data</span>
+
+            <input
+              type="date"
+              value={dateFilter}
+              onChange={(event) =>
+                setDateFilter(event.target.value)
+              }
+            />
+          </label>
+
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              setSearchCode('')
+              setDriverFilter('')
+              setDateFilter('')
+            }}
+          >
+            Limpar filtros
+          </button>
         </div>
       ) : null}
     </div>
+
+<div className="delivery-list">
+  {loading ? (
+    <div className="card">
+      <p className="muted">
+        Carregando entregas...
+      </p>
+    </div>
+  ) : null}
+
+  {!loading &&
+    visibleRows.map((row) => {
+      const client = clientMap.get(row.client_id)
+
+      const driver = row.driver_id
+        ? driverMap.get(row.driver_id)
+        : undefined
+
+      const statuses =
+        user.role === 'piloto'
+          ? [row.status, ...deliveryPilotTransitions(row)]
+          : allDeliveryStatuses.filter(status => !row.schedule_id || status !== 'aceito' || row.status === 'aceito')
+
+      return (
+        <div className="delivery-list-item" key={row.id}>
+          <div className="card delivery-web-card">
+            <div className="delivery-web-header">
+              <div>
+                <strong className="delivery-web-code">
+                  {row.code}
+                </strong>
+
+                <div className="muted">
+                  {dateTime(
+                    row.scheduled_at ??
+                      row.created_at,
+                  )}
+                </div>
+              </div>
+
+              {user.role === 'cliente' ? (
+                <span className={statusBadge(row.status)}>
+                  {deliveryDisplayStatus(row)}
+                </span>
+              ) : (
+                <select
+                  className="status-select"
+                  value={row.status}
+                  disabled={changingId === row.id}
+                  onChange={(event) =>
+                    void setStatus(
+                      row,
+                      event.target.value as DeliveryStatus,
+                    )
+                  }
+                >
+                  {statuses.map((status) => (
+                    <option
+                      key={status}
+                      value={status}
+                    >
+                      {deliveryStatusLabel[status]}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <div className="delivery-web-grid">
+              <div className="delivery-web-info">
+                <span>Cliente</span>
+
+                <strong>
+                  {client?.company_name ||
+                    client?.name ||
+                    'Cliente'}
+                </strong>
+              </div>
+
+              <div className="delivery-web-info">
+                <span>Piloto</span>
+
+                <strong>
+                  {driver?.name || 'Não atribuído'}
+                </strong>
+
+                {driver?.plate ? (
+                  <small>
+                    {driver.plate}
+                  </small>
+                ) : null}
+              </div>
+
+              <div className="delivery-web-info">
+                <span>
+                  {user.role === 'cliente'
+                    ? 'Valor'
+                    : 'Valor cobrado'}
+                </span>
+
+                <strong>
+                  {brl(row.value)}
+                </strong>
+              </div>
+
+              {user.role === 'dono' ? (
+                <div className="delivery-web-info">
+                  <span>Repasse ao piloto</span>
+
+                  <strong className="delivery-web-payout">
+                    {brl(row.driver_payout || 0)}
+                  </strong>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="delivery-route-card">
+              <div className="delivery-route-point">
+                <span className="delivery-route-dot start" />
+
+                <div>
+                  <small>Coleta</small>
+
+                  <strong>
+                    {row.origin_address}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="delivery-route-line" />
+
+              <div className="delivery-route-point">
+                <span className="delivery-route-dot end" />
+
+                <div>
+                  <small>Entrega</small>
+
+                  <strong>
+                    {row.destination_address}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            {row.notes ? (
+              <div className="delivery-web-notes">
+                <span>Observações</span>
+
+                <p>
+                  {row.notes}
+                </p>
+              </div>
+            ) : null}
+
+            <div className="delivery-web-actions">
+                        {user.role === 'piloto' && needsDeliveryStart(row) && (
+                          <button type="button" className="btn btn-gold btn-small" disabled={!!changingId}
+                            onClick={() => void startAttendance(row)}>
+                            {changingId === row.id ? 'Iniciando...' : 'Iniciar atendimento'}
+                          </button>
+                        )}
+
+              <button
+                className="btn btn-ghost btn-small"
+                type="button"
+                onClick={() =>
+                  void openHistory(row)
+                }
+              >
+                {historyDelivery?.id === row.id
+                  ? 'Fechar histórico'
+                  : 'Histórico'}
+              </button>
+
+              {user.role === 'cliente' &&
+              row.driver_id &&
+              [
+                'aceito',
+                'coletado',
+                'em_rota',
+                'chegou',
+              ].includes(row.status) ? (
+                <button
+                  className="btn btn-gold btn-small"
+                  type="button"
+                  onClick={() =>
+                    void openTracking(row)
+                  }
+                >
+                  {trackingDelivery?.id === row.id
+                    ? 'Fechar mapa'
+                    : 'Acompanhar piloto'}
+                </button>
+              ) : null}
+
+              {user.role === 'dono' ? (
+                <button
+                  className="btn btn-ghost btn-small"
+                  type="button"
+                  onClick={() =>
+                    startEdit(row)
+                  }
+                >
+                  Editar
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {historyDelivery?.id === row.id ? (
+            <div className="card history-card delivery-inline-detail">
+              <div className="section-heading">
+                <div>
+                  <h3>
+                    Histórico · {row.code}
+                  </h3>
+
+                  <p className="muted">
+                    Todos os eventos registrados no banco.
+                  </p>
+                </div>
+
+                <button
+                  className="btn btn-ghost btn-small"
+                  type="button"
+                  onClick={() => {
+                    setHistoryDelivery(null)
+                    setHistory([])
+                  }}
+                >
+                  Fechar
+                </button>
+              </div>
+
+              {historyLoading ? (
+                <p className="muted">
+                  Carregando histórico...
+                </p>
+              ) : (
+                <div className="history-list">
+                  {history.map((item) => (
+                    <div
+                      className="history-item"
+                      key={item.id}
+                    >
+                      <span
+                        className={statusBadge(
+                          item.status,
+                        )}
+                      >
+                        {
+                          deliveryStatusLabel[
+                            item.status
+                          ]
+                        }
+                      </span>
+
+                      <div>
+                        <strong>
+                          {dateTime(
+                            item.created_at,
+                          )}
+                        </strong>
+
+                        {item.note ? (
+                          <div className="muted">
+                            {item.note}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+
+                  {!history.length ? (
+                    <p className="muted">
+                      Nenhum evento registrado.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {user.role === 'cliente' &&
+          trackingDelivery?.id === row.id ? (
+            <div className="card gps-detail-card delivery-inline-detail">
+              <div className="gps-detail-header">
+                <h3>
+                  Acompanhar entrega · {row.code}
+                </h3>
+
+                <button
+                  className="btn btn-ghost btn-small"
+                  type="button"
+                  onClick={() => {
+                    setTrackingDelivery(null)
+                    setTrackingPosition(null)
+                    setTrackingError('')
+                  }}
+                >
+                  Fechar
+                </button>
+              </div>
+
+              {trackingLoading ? (
+                <p className="muted">
+                  Localizando piloto...
+                </p>
+              ) : null}
+
+              {trackingError ? (
+                <div className="notice notice-error">
+                  {trackingError}
+                </div>
+              ) : null}
+
+              {!trackingLoading && !trackingPosition ? (
+                <div className="notice">
+                  O piloto ainda não enviou uma posição GPS para esta entrega.
+                </div>
+              ) : null}
+
+
+            {trackingPosition ? (
+              <>
+                <div className="delivery-tracking-map">
+                  <MapContainer
+                    center={[
+                      trackingPosition.latitude,
+                      trackingPosition.longitude,
+                    ]}
+                    zoom={15}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                    }}
+                    scrollWheelZoom
+                  >
+                    <TileLayer
+                      attribution='&copy; OpenStreetMap contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+
+                    <RecenterDeliveryMap
+                      center={[
+                        trackingPosition.latitude,
+                        trackingPosition.longitude,
+                      ]}
+                    />
+
+                    <CircleMarker
+                      center={[
+                        trackingPosition.latitude,
+                        trackingPosition.longitude,
+                      ]}
+                      radius={10}
+                      pathOptions={{
+                        color: '#ffffff',
+                        weight: 3,
+                        fillColor: '#22c55e',
+                        fillOpacity: 1,
+                      }}
+                    >
+                      <Popup>
+                        <strong>Piloto da sua entrega</strong>
+                        <br />
+
+                        Última atualização:{' '}
+                        {formatPositionTime(
+                          trackingPosition.captured_at,
+                        )}
+                      </Popup>
+                    </CircleMarker>
+                  </MapContainer>
+                </div>
+
+                <div
+                  className="gps-summary"
+                  style={{ marginTop: '16px' }}
+                >
+                  <div className="gps-stat">
+                    <span>Status</span>
+                    <strong>
+                      {deliveryStatusLabel[trackingDelivery.status]}
+                    </strong>
+                  </div>
+
+                  <div className="gps-stat">
+                    <span>Última posição</span>
+                    <strong>
+                      {formatPositionTime(
+                        trackingPosition.captured_at,
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="gps-stat">
+                    <span>Precisão</span>
+                    <strong>
+                      {trackingPosition.accuracy != null
+                        ? `${Math.round(
+                            trackingPosition.accuracy,
+                          )} m`
+                        : '—'}
+                    </strong>
+                  </div>
+                </div>
+              </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )
+    })}
+
+  {!loading && !filteredRows.length ? (
+    <div className="card">
+      <p className="muted">
+        Nenhuma entrega encontrada com os filtros selecionados.
+      </p>
+    </div>
+  ) : null}
+
+  {visibleCount < filteredRows.length ? (
+    <button
+      type="button"
+      className="btn btn-ghost delivery-load-more"
+      onClick={() =>
+        setVisibleCount((current) => current + 10)
+      }
+    >
+      Carregar mais
+    </button>
+  ) : null}
+
+    </div>
+  </div>
   )
 }

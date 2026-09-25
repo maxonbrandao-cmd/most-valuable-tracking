@@ -1,0 +1,33 @@
+.finance-page { display: grid; gap: 20px; }
+.finance-header, .finance-toolbar, .finance-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.finance-header h3, .finance-panel h3 { margin: 0 0 6px; }
+.finance-actions { justify-content: flex-start; }
+.finance-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.finance-summary .card { padding: 18px; }
+.finance-summary .value { font-size: clamp(20px, 2vw, 30px); overflow-wrap: anywhere; }
+.finance-income { color: var(--ok); }
+.finance-expense { color: var(--bad); }
+.finance-form-grid, .finance-filters { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.finance-form-grid .field, .finance-filters .field { margin-top: 0; }
+.finance-wide { grid-column: 1 / -1; }
+.finance-panel { display: grid; gap: 18px; }
+.finance-table-wrap { overflow-x: auto; }
+.finance-table { width: 100%; }
+.finance-table td { vertical-align: middle; }
+.finance-table .finance-money { text-align: right; white-space: nowrap; }
+.finance-table .finance-description { min-width: 200px; overflow-wrap: anywhere; }
+.finance-table button { white-space: nowrap; }
+.finance-category-list { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.finance-category-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.finance-category-item span { overflow-wrap: anywhere; }
+.finance-page fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.finance-page button:disabled { opacity: .55; cursor: not-allowed; }
+.finance-empty { text-align: center; padding: 28px 14px; color: var(--muted); }
+.finance-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+@media (max-width: 760px) {
+  .finance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .finance-form-grid, .finance-filters { grid-template-columns: 1fr; }
+  .finance-category-list { grid-template-columns: 1fr; }
+  .finance-header > .finance-actions { width: 100%; }
+  .finance-header > .finance-actions button { flex: 1; }
+}
