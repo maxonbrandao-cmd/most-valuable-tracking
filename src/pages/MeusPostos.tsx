@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useStore } from '../context'
 import { supabase } from '../lib/supabase'
@@ -12,8 +12,13 @@ type Post = {
   start_time: string
   end_time: string
   active: boolean
+  origin_address: string | null
   drivers: { id: string; name: string }[]
+  requests: { id: string; code: string; status: string; driver_name: string | null; created_at: string }[]
 }
+
+type RequestForm = { origin: string; originCep: string; destination: string; destinationCep: string; recipient: string; phone: string; notes: string }
+const emptyRequest: RequestForm = { origin: '', originCep: '', destination: '', destinationCep: '', recipient: '', phone: '', notes: '' }
 
 const days = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
 
@@ -30,8 +35,13 @@ export default function MeusPostos() {
   const role = user?.role
   const [result, setResult] = useState<{ owner: string; rows: Post[] } | null>(null)
   const [error, setError] = useState('')
+  const [requestError, setRequestError] = useState('')
+  const [requestMessage, setRequestMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [revision, setRevision] = useState(0)
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null)
+  const [form, setForm] = useState<RequestForm>(emptyRequest)
+  const [submitting, setSubmitting] = useState(false)
   const owner = `${userId}:${companyId}:${clientId}`
 
   useEffect(() => {
@@ -66,6 +76,31 @@ export default function MeusPostos() {
   }
 
   const rows = result?.owner === owner ? result.rows : []
+  async function submitRequest(event: FormEvent) {
+    event.preventDefault()
+    if (!supabase || !selectedPost || submitting) return
+    setSubmitting(true)
+    setRequestError('')
+    try {
+      const { error: requestError } = await supabase.rpc('request_fixed_post_delivery', {
+        p_fixed_post_id: selectedPost.id,
+        p_origin_address: form.origin.trim(),
+        p_origin_postal_code: form.originCep.replace(/\D/g, ''),
+        p_destination_address: form.destination.trim(),
+        p_destination_postal_code: form.destinationCep.replace(/\D/g, ''),
+        p_recipient_name: form.recipient.trim(),
+        p_recipient_phone: form.phone.trim(),
+        p_notes: form.notes.trim(),
+      })
+      if (requestError) throw requestError
+      setSelectedPost(null)
+      setForm(emptyRequest)
+      setRequestMessage('Solicitação enviada. A empresa confirmará a corrida e informará o piloto designado.')
+      setRevision(value => value + 1)
+    } catch (e) {
+      setRequestError(e instanceof Error ? e.message : 'Não foi possível solicitar a corrida. Tente novamente.')
+    } finally { setSubmitting(false) }
+  }
   return (
     <div className="programacoes-page">
       <div className="section-heading">
@@ -105,6 +140,18 @@ export default function MeusPostos() {
                   <strong>Pilotos alocados</strong>
                   <p className="muted">{post.drivers.map(driver => driver.name).join(', ') || 'Nenhum piloto alocado.'}</p>
                 </div>
+                {post.active && <button type="button" className="btn btn-gold btn-inline" onClick={() => {
+                  setSelectedPost(post)
+                  setForm({ ...emptyRequest, origin: post.origin_address || '' })
+                  setRequestError('')
+                }}>Solicitar corrida avulsa</button>}
+                {post.requests?.length > 0 && <div className="programacao-section">
+                  <strong>Corridas deste posto</strong>
+                  {post.requests.map(request => <p className="muted" key={request.id}>
+                    {request.code} · {request.status === 'pendente' && !request.driver_name ? 'Aguardando confirmação e piloto' : request.status.replace('_', ' ')}
+                    {request.driver_name ? ` · Piloto: ${request.driver_name}` : ''}
+                  </p>)}
+                </div>}
                 <div className="programacao-card-footer">
                   <span><small>Início</small><strong>{formatDate(post.start_date)}</strong></span>
                   <span><small>Término</small><strong>{formatDate(post.end_date)}</strong></span>
@@ -113,6 +160,22 @@ export default function MeusPostos() {
             ))}
           </div>
         )}
+      {requestMessage && <div className="notice" role="status">{requestMessage}<button type="button" className="btn btn-inline" onClick={() => setRequestMessage('')}>Fechar</button></div>}
+      {selectedPost && <div className="card" role="dialog" aria-modal="true" aria-labelledby="request-title" style={{ position: 'fixed', zIndex: 1000, inset: '8% 5%', overflow: 'auto', maxWidth: 680, margin: 'auto', padding: 24, boxShadow: '0 12px 48px #0005' }}>
+        <h3 id="request-title">Solicitar corrida · {selectedPost.name}</h3>
+        <p className="muted">A origem veio do endereço do posto, mas você pode alterar. A empresa confirmará a corrida e designará um piloto.</p>
+        <form onSubmit={submitRequest} className="cadastro-form">
+          <label className="field"><span>Endereço de coleta</span><input required value={form.origin} onChange={e => setForm({ ...form, origin: e.target.value })} /></label>
+          <label className="field"><span>CEP da coleta</span><input inputMode="numeric" value={form.originCep} onChange={e => setForm({ ...form, originCep: e.target.value })} /></label>
+          <label className="field"><span>Endereço de entrega</span><input required value={form.destination} onChange={e => setForm({ ...form, destination: e.target.value })} /></label>
+          <label className="field"><span>CEP da entrega</span><input inputMode="numeric" value={form.destinationCep} onChange={e => setForm({ ...form, destinationCep: e.target.value })} /></label>
+          <label className="field"><span>Nome de quem recebe</span><input value={form.recipient} onChange={e => setForm({ ...form, recipient: e.target.value })} /></label>
+          <label className="field"><span>Telefone de quem recebe</span><input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></label>
+          <label className="field"><span>Observações</span><textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
+          {requestError && <div className="notice notice-error" role="alert">{requestError}</div>}
+          <div className="form-actions"><button className="btn btn-gold" disabled={submitting}>{submitting ? 'Enviando...' : 'Enviar solicitação'}</button><button type="button" className="btn btn-inline" disabled={submitting} onClick={() => setSelectedPost(null)}>Cancelar</button></div>
+        </form>
+      </div>}
     </div>
   )
 }

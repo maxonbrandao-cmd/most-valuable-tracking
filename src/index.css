@@ -234,6 +234,9 @@ button, input, select, textarea { font: inherit; }
 .cep-button { white-space: nowrap; min-height: 44px; }
 .form-span-2 { grid-column: span 2; }
 .form-actions, .table-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.account-settings { display: grid; gap: 14px; max-width: 760px; }
+.account-settings .card h4 { margin: 0 0 6px; font-size: 18px; }
+.account-settings .muted { line-height: 1.5; }
 .table-actions { margin-top: 0; }
 .form-hint { margin-top: 12px; font-size: 12px; }
 .check-field { display: flex; align-items: center; gap: 8px; margin-top: 18px; color: var(--muted); }

@@ -13,6 +13,7 @@ const links = [
   { to: '/programacoes', label: 'Programações', roles: ['dono'] },
   { to: '/cadastros', label: 'Cadastros', roles: ['dono'] },
   { to: '/usuarios', label: 'Usuários', roles: ['dono'] },
+  { to: '/minha-conta', label: 'Minha conta', roles: ['dono'] },
   { to: '/canhotos', label: 'Canhotos', roles: ['dono', 'piloto'] },
   { to: '/financeiro', label: 'Financeiro', roles: ['dono'] },
 ]

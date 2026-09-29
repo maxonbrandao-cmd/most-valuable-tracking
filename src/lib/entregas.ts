@@ -25,6 +25,7 @@ export type DeliveryRecord = {
   notes: string | null
   status: DeliveryStatus
   schedule_id: string | null
+  fixed_post_id?: string | null
   started_at: string | null
   scheduled_at: string | null
   accepted_at: string | null
@@ -84,7 +85,7 @@ function optional(value: string) {
 export async function listDeliveries(companyId: string) {
   const { data, error } = await db()
     .from('deliveries')
-    .select('id, company_id, code, client_id, driver_id, origin_address, origin_postal_code, destination_address, destination_postal_code, value, driver_payout, notes, status, schedule_id, started_at, scheduled_at, accepted_at, picked_up_at, delivered_at, created_at')
+    .select('id, company_id, code, client_id, driver_id, origin_address, origin_postal_code, destination_address, destination_postal_code, value, driver_payout, notes, status, schedule_id, fixed_post_id, started_at, scheduled_at, accepted_at, picked_up_at, delivered_at, created_at')
     .eq('company_id', companyId)
     .order('created_at', { ascending: false })
 

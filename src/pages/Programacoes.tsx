@@ -36,6 +36,7 @@ type FixedPostRow = {
     end_time: string
     active: boolean
     notes: string | null
+    origin_address: string | null
   }
 
 type FixedPostAssignmentRow = {
@@ -152,6 +153,7 @@ export default function Programacoes() {
     week: ['1', '2', '3', '4', '5'],
     drivers: [] as string[],
     notes: '',
+    originAddress: '',
     })
 
   const [clients, setClients] = useState<DeliveryClient[]>([])
@@ -219,7 +221,8 @@ export default function Programacoes() {
             start_time,
             end_time,
             active,
-            notes
+            notes,
+            origin_address
           `,
         )
         .eq('company_id', cid)
@@ -537,7 +540,7 @@ export default function Programacoes() {
     setPostForm({
       name: '', client: '', start: todayIso(), end: '',
       startTime: '08:00', endTime: '18:00',
-      week: ['1', '2', '3', '4', '5'], drivers: [], notes: '',
+      week: ['1', '2', '3', '4', '5'], drivers: [], notes: '', originAddress: '',
     })
     setErr('')
     setMsg('')
@@ -559,6 +562,7 @@ export default function Programacoes() {
         .filter(a => a.company_id === cid && a.fixed_post_id === post.id && a.active)
         .map(a => a.driver_id))),
       notes: post.notes || '',
+      originAddress: post.origin_address || '',
     })
     setErr('')
     setMsg('')
@@ -625,6 +629,7 @@ export default function Programacoes() {
         start_date: postForm.start, end_date: endDate,
         start_time: postForm.startTime, end_time: postForm.endTime,
         weekdays: postForm.week.map(Number), notes: postForm.notes.trim() || null,
+        origin_address: postForm.originAddress.trim() || null,
       }).eq('company_id', cid).eq('id', editingPostId).select('id').single()
       if (result.error) throw result.error
       if (!result.data) throw new Error('Posto fixo não encontrado.')
@@ -667,6 +672,7 @@ export default function Programacoes() {
         name: '', client: '', start: todayIso(), end: '',
         startTime: '08:00', endTime: '18:00',
         week: ['1', '2', '3', '4', '5'], drivers: [], notes: '',
+        originAddress: '',
       })
       setMsg('Posto fixo atualizado com sucesso.')
     } catch (e: any) {
@@ -748,6 +754,7 @@ export default function Programacoes() {
           end_time: postForm.endTime,
           active: true,
           notes: postForm.notes.trim() || null,
+          origin_address: postForm.originAddress.trim() || null,
         })
         .select('id')
         .single()
@@ -792,6 +799,7 @@ export default function Programacoes() {
         week: ['1', '2', '3', '4', '5'],
         drivers: [],
         notes: '',
+        originAddress: '',
       })
 
       setMsg('Posto fixo criado com sucesso.')
@@ -1457,6 +1465,16 @@ export default function Programacoes() {
       </select>
     </label>
   </div>
+
+  <label className="field">
+    <span>Endereço de origem do posto</span>
+    <input
+      placeholder="Rua, número, bairro e cidade"
+      value={postForm.originAddress}
+      onChange={e => setPostForm({ ...postForm, originAddress: e.target.value })}
+    />
+    <small className="muted">Esse endereço virá preenchido no pedido de corrida e poderá ser editado pelo cliente.</small>
+  </label>
 
   <div className="programacao-section">
     <div className="programacao-section-title">

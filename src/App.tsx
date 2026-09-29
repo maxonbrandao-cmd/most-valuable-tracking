@@ -18,6 +18,7 @@ import CanhotoNovo from './pages/CanhotoNovo'
 import Financeiro from './pages/Financeiro'
 import Cadastros from './pages/Cadastros'
 import Usuarios from './pages/Usuarios'
+import MinhaConta from './pages/MinhaConta'
 import MinhasCorridas from './pages/MinhasCorridas'
 
 export default function App() {
@@ -264,6 +265,7 @@ export default function App() {
           <Route path="/programacoes" element={<Programacoes />} />
           <Route path="/cadastros" element={<Cadastros />} />
           <Route path="/usuarios" element={<Usuarios />} />
+          <Route path="/minha-conta" element={<MinhaConta />} />
           <Route path="/canhotos" element={<Canhotos />} />
           <Route path="/canhotos/novo" element={<CanhotoNovo />} />
           <Route path="/financeiro" element={<Financeiro />} />

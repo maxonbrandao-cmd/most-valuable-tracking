@@ -611,6 +611,7 @@ const reload = useCallback(async () => {
                     row.scheduled_at ??
                       row.created_at,
                   )}
+                  {row.fixed_post_id ? ' · Solicitação avulsa de posto fixo' : ''}
                 </div>
               </div>
 
